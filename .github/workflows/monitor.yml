@@ -2,8 +2,8 @@ name: College Website Monitor
 
 on:
   schedule:
-    - cron: "0 * * * *"   # every hour
-  workflow_dispatch:        # manual trigger from Actions tab
+    - cron: "0 * * * *"
+  workflow_dispatch:
 
 jobs:
   check-website:
@@ -12,36 +12,45 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 anthropic
+        run: |
+          pip install requests beautifulsoup4
+          pip install google-api-python-client google-auth
 
       - name: Run monitor
         env:
-          # ── Required ──────────────────────────
-          EMAIL_SENDER:        ${{ secrets.EMAIL_SENDER }}
-          EMAIL_PASSWORD:      ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_RECEIVER:      ${{ secrets.EMAIL_RECEIVER }}
-          # ── Optional — remove if not using ───
-          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
-          CALLMEBOT_PHONE:     ${{ secrets.CALLMEBOT_PHONE }}
-          CALLMEBOT_APIKEY:    ${{ secrets.CALLMEBOT_APIKEY }}
-          GEMINI_API_KEY:      ${{ secrets.GEMINI_API_KEY }}
+          # ── Required ──────────────────────────────────────
+          EMAIL_SENDER:                 ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:               ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVER:               ${{ secrets.EMAIL_RECEIVER }}
+          # ── Optional — Telegram ───────────────────────────
+          TELEGRAM_BOT_TOKEN:           ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:             ${{ secrets.TELEGRAM_CHAT_ID }}
+          # ── Optional — Discord ────────────────────────────
+          DISCORD_WEBHOOK_URL:          ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # ── Optional — AI (free Gemini) ───────────────────
+          GEMINI_API_KEY:               ${{ secrets.GEMINI_API_KEY }}
+          # ── Optional — Google Calendar & Sheets ──────────
+          GOOGLE_SERVICE_ACCOUNT_JSON:  ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_CALENDAR_ID:           ${{ secrets.GOOGLE_CALENDAR_ID }}
+          GOOGLE_SHEETS_ID:             ${{ secrets.GOOGLE_SHEETS_ID }}
+          # ── Optional — Notion ─────────────────────────────
+          NOTION_API_KEY:               ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID:           ${{ secrets.NOTION_DATABASE_ID }}
         run: python monitor.py
 
-      - name: Commit updated snapshot, history & archived PDFs
+      - name: Commit all auto-generated files
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add snapshot.json history.json archived_pdfs/ 2>/dev/null || true
+          git add snapshot.json history.json seen_notices.json deadlines.json \
+                  pdf_index.json archived_pdfs/ docs/ 2>/dev/null || true
           git diff --cached --quiet || \
-            git commit -m "chore: update snapshot $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git commit -m "chore: auto-update $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push
