@@ -1,0 +1,42 @@
+{
+  "pages": [
+    { "url": "https://www.coeptech.ac.in/",             "name": "Home" },
+    { "url": "https://www.coeptech.ac.in/notices/",     "name": "Notices" },
+    { "url": "https://www.coeptech.ac.in/academics/",   "name": "Academics" },
+    { "url": "https://www.coeptech.ac.in/examination/", "name": "Examination" },
+    { "url": "https://www.coeptech.ac.in/placement/",   "name": "Placements" }
+  ],
+
+  "keywords": [
+    "exam", "examination", "result", "results",
+    "scholarship", "holiday", "fee", "fees",
+    "admission", "circular", "notice", "tender",
+    "recruitment", "placement", "internship",
+    "gate", "syllabus", "timetable", "schedule",
+    "urgent", "important", "last date", "deadline"
+  ],
+
+  "keyword_alert_only": false,
+
+  "max_pdf_size_mb": 5,
+  "max_pdfs_per_alert": 3,
+  "archive_pdfs_in_repo": true,
+
+  "ai_summary_enabled": true,
+  "ai_pdf_summary_enabled": true,
+
+  "section_selectors": [
+    [".notices, #notices, .notice-board",   "Notices & Announcements"],
+    [".news, #news, .latest-news",          "News"],
+    [".events, #events",                    "Events"],
+    [".admission, #admission",              "Admissions"],
+    [".academics, #academics",              "Academics"],
+    [".results, #results",                  "Results"],
+    [".tender, #tender",                    "Tenders"],
+    [".recruitment, #recruitment",          "Recruitment"],
+    [".placement, #placement",              "Placements"],
+    ["main, #main, .main-content",          "Main Content"],
+    ["header",                              "Header / Banner"],
+    ["footer",                              "Footer"]
+  ]
+}

@@ -1,92 +1,117 @@
-# COEP Tech Website Monitor
-Automatically checks https://www.coeptech.ac.in/ for changes and emails you.
-**Cost: ₹0. Runs every hour on GitHub's free servers.**
+# COEP Tech Website Monitor v2
+**9 automations. ₹0 cost. GitHub Actions + Gmail + Telegram + WhatsApp + Claude AI.**
 
 ---
 
-## Setup (one-time, ~10 minutes)
+## Features
+| # | Feature | Requires |
+|---|---------|---------|
+| 1 | WhatsApp alerts | CallMeBot setup (free) |
+| 2 | Telegram alerts | Telegram Bot (free) |
+| 3 | AI summary of changes | Anthropic API key |
+| 4 | PDF auto-summariser | Anthropic API key |
+| 5 | Keyword alerts | Built-in (config.json) |
+| 6 | Change history log | Built-in (history.json in repo) |
+| 7 | Weekly digest email | Built-in (Sunday 1:30 PM IST) |
+| 8 | PDF archive | Built-in (archived_pdfs/ folder) |
+| 9 | Monitor multiple pages | Built-in (config.json) |
 
-### Step 1 — Create a GitHub repository
-1. Go to https://github.com/new
-2. Name it `college-monitor` (private is fine)
-3. Click **Create repository**
+---
 
-### Step 2 — Upload these files
-Upload both files maintaining this structure:
+## File structure
 ```
 college-monitor/
-├── monitor.py
-└── .github/
-    └── workflows/
-        └── monitor.yml
-```
-You can use GitHub's web UI: click **Add file → Upload files** or use Git.
-
-### Step 3 — Get a Gmail App Password
-> You need this so the script can send email without using your real password.
-
-1. Go to your Google Account → **Security**
-2. Make sure **2-Step Verification** is ON
-3. Search for **"App Passwords"** in the search bar
-4. Click **App Passwords** → Select app: **Mail** → Select device: **Other** → type "CollegeMonitor"
-5. Click **Generate** — copy the 16-character password shown
-
-### Step 4 — Add GitHub Secrets
-In your GitHub repo, go to **Settings → Secrets and variables → Actions → New repository secret**
-
-Add these three secrets:
-
-| Secret name      | Value                              |
-|------------------|------------------------------------|
-| `EMAIL_SENDER`   | your Gmail address (xyz@gmail.com) |
-| `EMAIL_PASSWORD` | the 16-char App Password from Step 3 |
-| `EMAIL_RECEIVER` | email where you want alerts (can be same) |
-
-### Step 5 — Enable Actions
-Go to the **Actions** tab in your repo and click **"I understand my workflows, go ahead and enable them"**.
-
-### Step 6 — First run
-Click **Actions → College Website Monitor → Run workflow** to trigger manually.
-- First run: saves a baseline snapshot, no email sent.
-- All future runs: emails you if anything changed.
-
----
-
-## Customise
-
-**Change frequency** — edit `monitor.yml` line 7:
-```yaml
-- cron: "0 * * * *"      # every hour (default)
-- cron: "0 8,20 * * *"   # twice a day at 8am and 8pm UTC
-- cron: "*/30 * * * *"   # every 30 minutes
-```
-
-**Monitor a specific page** — edit `monitor.py` line 10:
-```python
-WEBSITE_URL = "https://www.coeptech.ac.in/notices/"   # just notices page
-```
-
-**Monitor multiple pages** — duplicate the monitor logic in a loop:
-```python
-URLS = [
-    "https://www.coeptech.ac.in/",
-    "https://www.coeptech.ac.in/notices/",
-    "https://www.coeptech.ac.in/academics/",
-]
+├── monitor.py                  ← main script
+├── config.json                 ← edit this to customise
+├── modules/
+│   ├── scraper.py
+│   ├── notifiers.py
+│   ├── ai_helper.py
+│   ├── email_builder.py
+│   └── history.py
+├── archived_pdfs/              ← auto-created, PDFs saved here
+├── snapshot.json               ← auto-created on first run
+├── history.json                ← auto-created, full change log
+└── .github/workflows/
+    ├── monitor.yml             ← runs hourly
+    └── digest.yml              ← runs every Sunday
 ```
 
 ---
 
-## How it works
-1. GitHub's free servers wake up every hour
-2. `monitor.py` fetches the website and strips all scripts/styles
-3. It hashes the visible text and compares to `snapshot.txt` (stored in your repo)
-4. If different → sends you an HTML email showing exactly what changed
-5. Updates `snapshot.txt` and commits it back automatically
+## Setup
 
-## Free tier limits
-- GitHub Actions free tier: **2,000 minutes/month** for private repos
-- Running every hour = 24 runs/day × ~1 min each = ~720 min/month — well within limits
-- Gmail SMTP: free, unlimited for personal use
+### Step 1 — Upload files
+Upload everything from this zip to your GitHub repo maintaining the folder structure.
+The critical path is `.github/workflows/` — create it via GitHub's "Create new file" with the full path.
 
-No credit card, no paid API, no server needed.
+### Step 2 — GitHub Secrets
+Go to **Settings → Secrets and variables → Actions → New repository secret**
+
+#### Required (Email)
+| Secret | Value |
+|--------|-------|
+| `EMAIL_SENDER` | your Gmail |
+| `EMAIL_PASSWORD` | Gmail App Password |
+| `EMAIL_RECEIVER` | alert destination email |
+
+#### Optional — Telegram
+1. Open Telegram → search **@BotFather** → send `/newbot`
+2. Follow prompts, copy the **bot token**
+3. Start a chat with your bot, then visit:
+   `https://api.telegram.org/botYOUR_TOKEN/getUpdates`
+4. Copy the `chat.id` value
+
+| Secret | Value |
+|--------|-------|
+| `TELEGRAM_BOT_TOKEN` | token from BotFather |
+| `TELEGRAM_CHAT_ID` | your chat ID from getUpdates |
+
+#### Optional — WhatsApp (CallMeBot)
+1. Add **+34 644 59 78 99** to your contacts as "CallMeBot"
+2. Send this WhatsApp message to that number:
+   `I allow callmebot to send me messages`
+3. You'll receive your API key within 2 minutes
+
+| Secret | Value |
+|--------|-------|
+| `CALLMEBOT_PHONE` | your number with country code, e.g. `919876543210` |
+| `CALLMEBOT_APIKEY` | key received from CallMeBot |
+
+#### Optional — AI Summaries (Claude)
+1. Go to **console.anthropic.com** → API Keys → Create key
+2. New accounts get free credits to start
+
+| Secret | Value |
+|--------|-------|
+| `ANTHROPIC_API_KEY` | your Anthropic API key |
+
+---
+
+### Step 3 — Customise config.json
+Edit `config.json` to:
+- **Add/remove pages** to monitor
+- **Add keywords** that trigger priority alerts
+- **Set `keyword_alert_only: true`** to only get alerted for important keywords
+- **Toggle AI summaries** on/off
+
+---
+
+### Step 4 — First run
+Go to **Actions → College Website Monitor → Run workflow**
+- First run saves baselines for all pages — no alerts sent
+- Next run onwards: full alerts for any changes
+
+---
+
+## Cost breakdown
+| Service | Cost |
+|---------|------|
+| GitHub Actions (public repo) | Free, unlimited |
+| Gmail SMTP | Free |
+| Telegram Bot API | Free, unlimited |
+| CallMeBot WhatsApp | Free |
+| Claude Haiku API (AI summaries) | ~₹0.01 per change detected |
+| **Total** | **≈ ₹0** |
+
+The Claude API calls only happen when a change is detected (not every hour), so monthly cost is effectively ₹0-2 depending on how often the site changes.
