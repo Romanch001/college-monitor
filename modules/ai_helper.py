@@ -1,28 +1,27 @@
 """
-ai_helper.py — AI summaries using Google Gemini (completely free)
-Free tier: 1,500 requests/day · No credit card needed
-Get your key at: aistudio.google.com → Get API Key
-Add as GitHub Secret: GEMINI_API_KEY
+ai_helper.py — All Gemini-powered intelligence (100% free)
+Functions:
+  summarise_diff       — plain-English summary of page changes
+  summarise_pdf        — bullet-point PDF summary
+  score_importance     — rate change 1-10, decide if worth alerting
+  extract_deadlines    — pull out dates/deadlines from text
+  translate_text       — detect & translate Marathi/Hindi → English
+  parse_timetable      — extract structured timetable from PDF
 """
-import os
-import base64
-import requests
+import os, json, base64, requests
 
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-1.5-flash:generateContent"
 )
 
-
-def _api_key() -> str | None:
+def _key():
     v = os.environ.get("GEMINI_API_KEY", "").strip()
-    return v if v else None
+    return v or None
 
-
-def _call(contents: list, system: str, max_tokens: int = 512) -> str | None:
-    key = _api_key()
+def _call(contents, system, max_tokens=600, json_mode=False):
+    key = _key()
     if not key:
-        print("  [ai] GEMINI_API_KEY not set — AI summaries skipped.")
         return None
     try:
         payload = {
@@ -30,82 +29,120 @@ def _call(contents: list, system: str, max_tokens: int = 512) -> str | None:
             "contents": contents,
             "generationConfig": {
                 "maxOutputTokens": max_tokens,
-                "temperature": 0.3,
+                "temperature": 0.2,
+                **({"responseMimeType": "application/json"} if json_mode else {}),
             },
         }
-        resp = requests.post(
-            GEMINI_URL,
-            params={"key": key},
-            json=payload,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        r = requests.post(GEMINI_URL, params={"key": key}, json=payload, timeout=30)
+        r.raise_for_status()
+        return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
-        print(f"  [ai] Gemini call failed: {e}")
+        print(f"  [ai] Gemini error: {e}")
         return None
 
+def _pdf_part(pdf_bytes):
+    return {"inline_data": {"mime_type": "application/pdf",
+                            "data": base64.standard_b64encode(pdf_bytes).decode()}}
 
-def summarise_diff(page_name: str, section_diffs: dict) -> str | None:
-    """Return a 2-4 sentence plain-English summary of what changed."""
-    if not _api_key():
-        return None
-
+# ── Summarise diff ───────────────────────────────────────────────
+def summarise_diff(page_name, section_diffs):
+    if not _key(): return None
     lines = []
-    for section, diff in section_diffs.items():
-        if diff.get("added"):
-            lines.append(f"[{section}] ADDED: " + " | ".join(diff["added"][:10]))
-        if diff.get("removed"):
-            lines.append(f"[{section}] REMOVED: " + " | ".join(diff["removed"][:10]))
+    for s, d in section_diffs.items():
+        if d.get("added"):   lines.append(f"[{s}] ADDED: "   + " | ".join(d["added"][:8]))
+        if d.get("removed"): lines.append(f"[{s}] REMOVED: " + " | ".join(d["removed"][:8]))
+    if not lines: return None
+    sys = ("Summarise college website changes in 2-4 plain English sentences. "
+           "Be student-friendly. No markdown.")
+    txt = f"Page: '{page_name}' (COEP Technetu)\n\n" + "\n".join(lines)
+    return _call([{"role":"user","parts":[{"text":txt}]}], sys, 300)
 
-    if not lines:
-        return None
+# ── Summarise PDF ────────────────────────────────────────────────
+def summarise_pdf(pdf_bytes, filename):
+    if not _key(): return None
+    sys = ("Summarise this college document in 3-5 bullet points. "
+           "Cover: topic, key dates/deadlines, who it concerns, action required. "
+           "Use • bullets. Be concise.")
+    contents = [{"role":"user","parts":[
+        _pdf_part(pdf_bytes),
+        {"text": f"Document '{filename}' from COEP Technetu. Summarise in bullets."}
+    ]}]
+    return _call(contents, sys, 400)
 
-    system = (
-        "You are a helpful assistant summarising changes on a college website. "
-        "Be concise, factual, and student-friendly. "
-        "Write 2-4 plain English sentences. No bullet points, no markdown."
+# ── Importance scorer ────────────────────────────────────────────
+def score_importance(page_name, section_diffs, keywords_found):
+    """Returns dict: {score: 1-10, reason: str, should_alert: bool}"""
+    if not _key():
+        return {"score": 5, "reason": "AI scoring unavailable", "should_alert": True}
+    lines = []
+    for s, d in section_diffs.items():
+        if d.get("added"):   lines.append(f"[{s}] ADDED: "   + " | ".join(d["added"][:6]))
+        if d.get("removed"): lines.append(f"[{s}] REMOVED: " + " | ".join(d["removed"][:6]))
+    sys = (
+        "You score college website changes for a student. "
+        "Return ONLY valid JSON: {\"score\": <1-10>, \"reason\": \"<15 words max>\", \"should_alert\": <true/false>}. "
+        "10=exam/result/urgent deadline. 7=new notice/circular. 4=minor update. 1=footer/nav change. "
+        "should_alert=true if score>=6."
     )
-    user_text = (
-        f"Changes detected on the '{page_name}' page of COEP Technetu "
-        f"(College of Engineering Pune). Summarise what changed and why it matters to students:\n\n"
-        + "\n".join(lines)
+    kw_str = ", ".join(keywords_found) if keywords_found else "none"
+    txt = f"Page: {page_name}\nKeywords found: {kw_str}\nChanges:\n" + "\n".join(lines)
+    raw = _call([{"role":"user","parts":[{"text":txt}]}], sys, 150, json_mode=True)
+    if not raw: return {"score": 5, "reason": "scoring failed", "should_alert": True}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"score": 5, "reason": raw[:60], "should_alert": True}
+
+# ── Deadline extractor ───────────────────────────────────────────
+def extract_deadlines(text, page_name):
+    """Returns list of {date_str, description, type, urgency}"""
+    if not _key(): return []
+    sys = (
+        "Extract ALL dates and deadlines from this college website text. "
+        "Return ONLY valid JSON array: "
+        "[{\"date_str\":\"DD Mon YYYY or as written\", "
+        "\"description\":\"what is due\", "
+        "\"type\":\"exam|result|fee|admission|event|other\", "
+        "\"urgency\":\"high|medium|low\"}]. "
+        "Empty array [] if no dates found. No other text."
     )
-    contents = [{"role": "user", "parts": [{"text": user_text}]}]
-    return _call(contents, system, max_tokens=300)
+    txt = f"Page: {page_name}\n\n{text[:3000]}"
+    raw = _call([{"role":"user","parts":[{"text":txt}]}], sys, 600, json_mode=True)
+    if not raw: return []
+    try:
+        result = json.loads(raw)
+        return result if isinstance(result, list) else []
+    except Exception:
+        return []
 
-
-def summarise_pdf(pdf_bytes: bytes, filename: str) -> str | None:
-    """Send PDF to Gemini and return bullet-point summary."""
-    if not _api_key():
-        return None
-
-    b64 = base64.standard_b64encode(pdf_bytes).decode()
-    system = (
-        "You are a helpful assistant summarising college notices and documents. "
-        "Be concise and student-friendly. "
-        "Output exactly 3-5 bullet points covering: what this document is about, "
-        "key dates or deadlines, who it concerns, and any action required. "
-        "Use plain text bullets starting with *"
+# ── Translate text ───────────────────────────────────────────────
+def translate_text(text):
+    """Detect Marathi/Hindi and translate to English. Returns translated text or None."""
+    if not _key(): return None
+    if not text or len(text.strip()) < 20: return None
+    sys = (
+        "Detect the language of the text. "
+        "If it is Marathi or Hindi, translate it to English and return ONLY the translation. "
+        "If it is already English, return exactly: ENGLISH_ALREADY. "
+        "No explanation, no preamble."
     )
-    contents = [
-        {
-            "role": "user",
-            "parts": [
-                {
-                    "inline_data": {
-                        "mime_type": "application/pdf",
-                        "data": b64,
-                    }
-                },
-                {
-                    "text": (
-                        f"This document '{filename}' is from COEP Technetu college. "
-                        "Summarise it in 3-5 bullet points."
-                    )
-                },
-            ],
-        }
-    ]
-    return _call(contents, system, max_tokens=400)
+    raw = _call([{"role":"user","parts":[{"text":text[:1000]}]}], sys, 500)
+    if not raw or raw.strip() == "ENGLISH_ALREADY": return None
+    return raw
+
+# ── Parse timetable PDF ──────────────────────────────────────────
+def parse_timetable(pdf_bytes, filename):
+    """Extract structured timetable from a PDF. Returns formatted string or None."""
+    if not _key(): return None
+    sys = (
+        "Extract the timetable/schedule from this document. "
+        "Format it as a clean text table with Day | Time | Subject | Room columns. "
+        "If it's not a timetable, return: NOT_A_TIMETABLE."
+    )
+    contents = [{"role":"user","parts":[
+        _pdf_part(pdf_bytes),
+        {"text": f"Extract timetable from '{filename}'. Format as table."}
+    ]}]
+    raw = _call(contents, sys, 800)
+    if not raw or "NOT_A_TIMETABLE" in raw: return None
+    return raw
