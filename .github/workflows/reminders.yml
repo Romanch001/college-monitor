@@ -2,15 +2,19 @@ name: Deadline Reminders
 
 on:
   schedule:
-    - cron: "30 * * * *"   # runs at :30 every hour (offset from monitor)
+    - cron: "30 * * * *"
   workflow_dispatch:
 
 jobs:
   send-reminders:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -33,6 +37,10 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add deadlines.json 2>/dev/null || true
-          git diff --cached --quiet || \
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+          else
+            git pull --rebase origin main
             git commit -m "chore: reminder state $(date -u '+%Y-%m-%d %H:%M UTC')"
-          git push
+            git push
+          fi
