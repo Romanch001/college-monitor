@@ -1,0 +1,47 @@
+name: College Website Monitor
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # every hour
+  workflow_dispatch:        # manual trigger from Actions tab
+
+jobs:
+  check-website:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 anthropic
+
+      - name: Run monitor
+        env:
+          # ── Required ──────────────────────────
+          EMAIL_SENDER:        ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:      ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVER:      ${{ secrets.EMAIL_RECEIVER }}
+          # ── Optional — remove if not using ───
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          CALLMEBOT_PHONE:     ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_APIKEY:    ${{ secrets.CALLMEBOT_APIKEY }}
+          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python monitor.py
+
+      - name: Commit updated snapshot, history & archived PDFs
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add snapshot.json history.json archived_pdfs/ 2>/dev/null || true
+          git diff --cached --quiet || \
+            git commit -m "chore: update snapshot $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
