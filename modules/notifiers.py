@@ -1,184 +1,139 @@
 """
-notifiers.py — send alerts via Email, Telegram, WhatsApp (CallMeBot)
-Every channel is optional — if its secret is missing it is silently skipped.
+notifiers.py — Email (Gmail), Telegram Bot, Discord Webhook
+Each channel is optional — silently skipped if secrets missing.
 """
-import os
-import smtplib
-import requests
+import os, smtplib, requests
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from urllib.parse import quote
 
-
-# ── Helpers ──────────────────────────────────────────────────────
-def esc(s: str) -> str:
-    return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-
-def _env(key: str) -> str | None:
+def _e(key):
     v = os.environ.get(key, "").strip()
-    return v if v else None
+    return v or None
 
+def esc(s):
+    return str(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
 
-# ═══════════════════════════════════════════════════════════════════
-# EMAIL
-# ═══════════════════════════════════════════════════════════════════
-def send_email(
-    subject: str,
-    html_body: str,
-    attachments: list,       # [(filename, bytes), ...]
-):
-    sender   = _env("EMAIL_SENDER")
-    password = _env("EMAIL_PASSWORD")
-    receiver = _env("EMAIL_RECEIVER")
-    if not all([sender, password, receiver]):
-        print("  [email] Missing secrets — skipped.")
-        return
-
+# ═══════════════════════════ EMAIL ══════════════════════════════
+def send_email(subject, html_body, attachments=[]):
+    sender, pwd, recv = _e("EMAIL_SENDER"), _e("EMAIL_PASSWORD"), _e("EMAIL_RECEIVER")
+    if not all([sender, pwd, recv]):
+        print("  [email] secrets missing — skipped"); return
     msg = MIMEMultipart("mixed")
-    msg["Subject"] = subject
-    msg["From"]    = sender
-    msg["To"]      = receiver
+    msg["Subject"], msg["From"], msg["To"] = subject, sender, recv
     msg.attach(MIMEText(html_body, "html"))
+    for fname, data in attachments:
+        p = MIMEApplication(data, _subtype="pdf")
+        p.add_header("Content-Disposition", "attachment", filename=fname)
+        msg.attach(p)
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+        s.login(sender, pwd); s.sendmail(sender, recv, msg.as_string())
+    print(f"  [email] sent ({len(attachments)} attachments)")
 
-    for filename, pdf_bytes in attachments:
-        part = MIMEApplication(pdf_bytes, _subtype="pdf")
-        part.add_header("Content-Disposition", "attachment", filename=filename)
-        msg.attach(part)
+# ═══════════════════════ TELEGRAM ═══════════════════════════════
+def send_telegram(text, parse_mode="HTML"):
+    token, chat = _e("TELEGRAM_BOT_TOKEN"), _e("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        print("  [telegram] secrets missing — skipped"); return
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat, "text": text[:4000],
+                  "parse_mode": parse_mode, "disable_web_page_preview": True},
+            timeout=15
+        )
+        r.raise_for_status()
+        print("  [telegram] sent")
+    except Exception as e:
+        print(f"  [telegram] failed: {e}")
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as srv:
-        srv.login(sender, password)
-        srv.sendmail(sender, receiver, msg.as_string())
-    print(f"  [email] Sent to {receiver} ({len(attachments)} attachment(s))")
+def send_telegram_file(file_bytes, filename, caption=""):
+    """Send a file (e.g. PDF) via Telegram."""
+    token, chat = _e("TELEGRAM_BOT_TOKEN"), _e("TELEGRAM_CHAT_ID")
+    if not token or not chat: return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendDocument",
+            data={"chat_id": chat, "caption": caption[:1000]},
+            files={"document": (filename, file_bytes, "application/pdf")},
+            timeout=30
+        )
+        print(f"  [telegram] file sent: {filename}")
+    except Exception as e:
+        print(f"  [telegram] file send failed: {e}")
 
-
-# ═══════════════════════════════════════════════════════════════════
-# TELEGRAM
-# ═══════════════════════════════════════════════════════════════════
-def send_telegram(message: str):
+# ═══════════════════════ DISCORD ════════════════════════════════
+def send_discord(content="", embeds=None):
     """
-    Secrets needed:
-      TELEGRAM_BOT_TOKEN  — from @BotFather
-      TELEGRAM_CHAT_ID    — your chat/group ID
+    Secret: DISCORD_WEBHOOK_URL
+    Get it: Discord server → channel settings → Integrations → Webhooks → New Webhook → Copy URL
     """
-    token   = _env("TELEGRAM_BOT_TOKEN")
-    chat_id = _env("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        print("  [telegram] Missing secrets — skipped.")
-        return
-
-    # Telegram HTML mode: bold, italic, links only
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id":    chat_id,
-        "text":       message[:4000],   # Telegram limit
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
+    url = _e("DISCORD_WEBHOOK_URL")
+    if not url:
+        print("  [discord] secret missing — skipped"); return
+    payload = {}
+    if content: payload["content"] = content[:2000]
+    if embeds:  payload["embeds"] = embeds[:10]
     try:
         r = requests.post(url, json=payload, timeout=15)
-        r.raise_for_status()
-        print("  [telegram] Message sent.")
-    except Exception as e:
-        print(f"  [telegram] Failed: {e}")
-
-
-def build_telegram_message(
-    page_name: str,
-    page_url: str,
-    section_diffs: dict,
-    new_pdfs: dict,
-    keywords_found: list,
-    ai_summary: str | None,
-) -> str:
-    lines = [f"🔔 <b>COEP Website Change — {page_name}</b>"]
-    lines.append(f'🔗 <a href="{page_url}">{page_url}</a>\n')
-
-    if ai_summary:
-        lines.append(f"🤖 <b>AI Summary:</b>\n{ai_summary}\n")
-
-    if keywords_found:
-        kws = ", ".join(f"<code>{k}</code>" for k in keywords_found[:8])
-        lines.append(f"🏷 <b>Keywords:</b> {kws}\n")
-
-    for section, diff in list(section_diffs.items())[:3]:
-        lines.append(f"📍 <b>{section}</b>")
-        for line in diff["added"][:5]:
-            lines.append(f"  🟢 {line[:120]}")
-        for line in diff["removed"][:3]:
-            lines.append(f"  🔴 {line[:120]}")
-        lines.append("")
-
-    if new_pdfs:
-        lines.append(f"📎 <b>{len(new_pdfs)} new PDF(s):</b>")
-        for url, label in list(new_pdfs.items())[:5]:
-            lines.append(f'  • <a href="{url}">{label[:60]}</a>')
-
-    return "\n".join(lines)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# WHATSAPP (via CallMeBot — free, no credit card)
-# ═══════════════════════════════════════════════════════════════════
-def send_whatsapp(message: str):
-    """
-    Secrets needed:
-      CALLMEBOT_PHONE   — your WhatsApp number with country code (e.g. 919876543210)
-      CALLMEBOT_APIKEY  — API key from CallMeBot setup
-
-    One-time setup:
-      1. Add +34 644 59 78 99 to your WhatsApp contacts as "CallMeBot"
-      2. Send: I allow callmebot to send me messages
-      3. You'll receive your API key within 2 minutes
-    """
-    phone  = _env("CALLMEBOT_PHONE")
-    apikey = _env("CALLMEBOT_APIKEY")
-    if not phone or not apikey:
-        print("  [whatsapp] Missing secrets — skipped.")
-        return
-
-    # Strip emojis for WhatsApp (CallMeBot may reject them)
-    clean = message.encode("ascii", "ignore").decode()[:1000]
-    url = (
-        f"https://api.callmebot.com/whatsapp.php"
-        f"?phone={phone}&text={quote(clean)}&apikey={apikey}"
-    )
-    try:
-        r = requests.get(url, timeout=15)
-        if "Message Sent" in r.text or r.status_code == 200:
-            print("  [whatsapp] Message sent.")
+        if r.status_code in (200, 204):
+            print("  [discord] sent")
         else:
-            print(f"  [whatsapp] Unexpected response: {r.text[:200]}")
+            print(f"  [discord] failed {r.status_code}: {r.text[:100]}")
     except Exception as e:
-        print(f"  [whatsapp] Failed: {e}")
+        print(f"  [discord] failed: {e}")
 
-
-def build_whatsapp_message(
-    page_name: str,
-    page_url: str,
-    section_diffs: dict,
-    new_pdfs: dict,
-    keywords_found: list,
-    ai_summary: str | None,
-) -> str:
+# ═══════════════════ MESSAGE BUILDERS ═══════════════════════════
+def build_telegram_msg(page_name, page_url, section_diffs, new_pdfs,
+                       keywords, ai_summary, importance):
+    score = importance.get("score", 0)
+    emoji = "🔴" if score >= 8 else "🟡" if score >= 5 else "🟢"
     lines = [
-        f"COEP Website Change Alert",
-        f"Page: {page_name}",
-        f"URL: {page_url}",
+        f"{emoji} <b>COEP {esc(page_name)} — Change Detected</b>",
+        f'🔗 <a href="{page_url}">{page_url}</a>',
+        f"⭐ Importance: <b>{score}/10</b> — {esc(importance.get('reason',''))}",
         "",
     ]
     if ai_summary:
-        lines += [f"Summary: {ai_summary}", ""]
-    if keywords_found:
-        lines.append(f"Keywords: {', '.join(keywords_found[:6])}")
-    for section, diff in list(section_diffs.items())[:2]:
-        lines.append(f"\n[{section}]")
-        for l in diff["added"][:4]:
-            lines.append(f"+ {l[:100]}")
-        for l in diff["removed"][:2]:
-            lines.append(f"- {l[:100]}")
+        lines += [f"🤖 <b>Summary:</b> {esc(ai_summary)}", ""]
+    if keywords:
+        lines.append("🏷 <b>Keywords:</b> " + ", ".join(f"<code>{k}</code>" for k in keywords[:8]))
+    for sec, diff in list(section_diffs.items())[:3]:
+        lines.append(f"\n📍 <b>{esc(sec)}</b>")
+        for l in diff.get("added", [])[:4]:   lines.append(f"  🟢 {esc(l[:100])}")
+        for l in diff.get("removed", [])[:2]: lines.append(f"  🔴 {esc(l[:100])}")
     if new_pdfs:
-        lines.append(f"\n{len(new_pdfs)} new PDF(s) detected.")
-        for url, label in list(new_pdfs.items())[:3]:
-            lines.append(f"- {label[:60]}: {url}")
+        lines += ["", f"📎 <b>{len(new_pdfs)} new PDF(s):</b>"]
+        for url, label in list(new_pdfs.items())[:4]:
+            lines.append(f'  • <a href="{url}">{esc(label[:60])}</a>')
     return "\n".join(lines)
+
+def build_discord_embeds(page_name, page_url, section_diffs, new_pdfs,
+                         keywords, ai_summary, importance, deadlines):
+    score  = importance.get("score", 0)
+    color  = 0xFF0000 if score >= 8 else 0xFFAA00 if score >= 5 else 0x00AA00
+    fields = []
+    if ai_summary:
+        fields.append({"name": "🤖 AI Summary", "value": ai_summary[:500], "inline": False})
+    if keywords:
+        fields.append({"name": "🏷️ Keywords", "value": ", ".join(keywords[:10]), "inline": True})
+    fields.append({"name": "⭐ Importance", "value": f"{score}/10 — {importance.get('reason','')}", "inline": True})
+    for sec, diff in list(section_diffs.items())[:2]:
+        val = ""
+        for l in diff.get("added", [])[:4]:   val += f"🟢 {l[:80]}\n"
+        for l in diff.get("removed", [])[:2]: val += f"🔴 {l[:80]}\n"
+        if val: fields.append({"name": f"📍 {sec}", "value": val[:500], "inline": False})
+    if deadlines:
+        dl_str = "\n".join(f"📅 {d['date_str']} — {d['description'][:60]}" for d in deadlines[:4])
+        fields.append({"name": "📅 Deadlines Detected", "value": dl_str, "inline": False})
+    if new_pdfs:
+        pdf_str = "\n".join(f"[{label[:50]}]({url})" for url, label in list(new_pdfs.items())[:4])
+        fields.append({"name": f"📎 New PDFs ({len(new_pdfs)})", "value": pdf_str[:500], "inline": False})
+    return [{
+        "title": f"COEP {page_name} — Website Change",
+        "url": page_url,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "COEP Monitor • GitHub Actions • ₹0"},
+    }]
