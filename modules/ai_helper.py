@@ -1,84 +1,83 @@
 """
-ai_helper.py — Claude-powered summaries for page diffs and PDFs
-Uses claude-haiku (cheapest model) to keep costs near zero.
-Set ANTHROPIC_API_KEY in GitHub Secrets to enable.
+ai_helper.py — AI summaries using Google Gemini (completely free)
+Free tier: 1,500 requests/day · No credit card needed
+Get your key at: aistudio.google.com → Get API Key
+Add as GitHub Secret: GEMINI_API_KEY
 """
 import os
 import base64
 import requests
 
-API_URL = "https://api.anthropic.com/v1/messages"
-MODEL   = "claude-haiku-4-5-20251001"   # cheapest, fast, great for summaries
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "gemini-1.5-flash:generateContent"
+)
 
 
 def _api_key() -> str | None:
-    return os.environ.get("ANTHROPIC_API_KEY")
+    v = os.environ.get("GEMINI_API_KEY", "").strip()
+    return v if v else None
 
 
-def _call(messages: list, system: str, max_tokens: int = 512) -> str | None:
+def _call(contents: list, system: str, max_tokens: int = 512) -> str | None:
     key = _api_key()
     if not key:
+        print("  [ai] GEMINI_API_KEY not set — AI summaries skipped.")
         return None
     try:
+        payload = {
+            "system_instruction": {"parts": [{"text": system}]},
+            "contents": contents,
+            "generationConfig": {
+                "maxOutputTokens": max_tokens,
+                "temperature": 0.3,
+            },
+        }
         resp = requests.post(
-            API_URL,
-            headers={
-                "x-api-key": key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": MODEL,
-                "max_tokens": max_tokens,
-                "system": system,
-                "messages": messages,
-            },
+            GEMINI_URL,
+            params={"key": key},
+            json=payload,
             timeout=30,
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["content"][0]["text"].strip()
+        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception as e:
-        print(f"  [ai_helper] API call failed: {e}")
+        print(f"  [ai] Gemini call failed: {e}")
         return None
 
 
-# ── Summarise a page diff ────────────────────────────────────────
 def summarise_diff(page_name: str, section_diffs: dict) -> str | None:
-    """
-    section_diffs: {section_label: {added:[...], removed:[...]}}
-    Returns a plain-English 3-5 sentence summary.
-    """
+    """Return a 2-4 sentence plain-English summary of what changed."""
     if not _api_key():
         return None
 
     lines = []
     for section, diff in section_diffs.items():
-        if diff["added"]:
+        if diff.get("added"):
             lines.append(f"[{section}] ADDED: " + " | ".join(diff["added"][:10]))
-        if diff["removed"]:
+        if diff.get("removed"):
             lines.append(f"[{section}] REMOVED: " + " | ".join(diff["removed"][:10]))
 
     if not lines:
         return None
 
-    raw_diff = "\n".join(lines)
     system = (
-        "You are a helpful assistant summarising changes detected on a college website. "
+        "You are a helpful assistant summarising changes on a college website. "
         "Be concise, factual, and student-friendly. "
-        "Output 2-4 plain English sentences. No bullet points, no markdown."
+        "Write 2-4 plain English sentences. No bullet points, no markdown."
     )
-    user = (
-        f"The following changes were detected on the '{page_name}' page of COEP Technetu "
-        f"(College of Engineering Pune). Summarise what changed and why it might matter to students:\n\n"
-        f"{raw_diff}"
+    user_text = (
+        f"Changes detected on the '{page_name}' page of COEP Technetu "
+        f"(College of Engineering Pune). Summarise what changed and why it matters to students:\n\n"
+        + "\n".join(lines)
     )
-    return _call([{"role": "user", "content": user}], system, max_tokens=300)
+    contents = [{"role": "user", "parts": [{"text": user_text}]}]
+    return _call(contents, system, max_tokens=300)
 
 
-# ── Summarise a PDF ──────────────────────────────────────────────
 def summarise_pdf(pdf_bytes: bytes, filename: str) -> str | None:
-    """Send PDF to Claude and return a short summary."""
+    """Send PDF to Gemini and return bullet-point summary."""
     if not _api_key():
         return None
 
@@ -86,30 +85,27 @@ def summarise_pdf(pdf_bytes: bytes, filename: str) -> str | None:
     system = (
         "You are a helpful assistant summarising college notices and documents. "
         "Be concise and student-friendly. "
-        "Output 3-5 bullet points covering: what this document is about, "
+        "Output exactly 3-5 bullet points covering: what this document is about, "
         "key dates or deadlines, who it concerns, and any action required. "
-        "Use plain text bullets starting with •"
+        "Use plain text bullets starting with *"
     )
-    messages = [
+    contents = [
         {
             "role": "user",
-            "content": [
+            "parts": [
                 {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
+                    "inline_data": {
+                        "mime_type": "application/pdf",
                         "data": b64,
-                    },
+                    }
                 },
                 {
-                    "type": "text",
                     "text": (
-                        f"This is a document named '{filename}' from COEP Technetu college. "
-                        "Please summarise it in 3-5 bullet points."
-                    ),
+                        f"This document '{filename}' is from COEP Technetu college. "
+                        "Summarise it in 3-5 bullet points."
+                    )
                 },
             ],
         }
     ]
-    return _call(messages, system, max_tokens=400)
+    return _call(contents, system, max_tokens=400)
