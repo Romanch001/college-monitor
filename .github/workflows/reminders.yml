@@ -1,0 +1,38 @@
+name: Deadline Reminders
+
+on:
+  schedule:
+    - cron: "30 * * * *"   # runs at :30 every hour (offset from monitor)
+  workflow_dispatch:
+
+jobs:
+  send-reminders:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Send deadline reminders
+        env:
+          EMAIL_SENDER:       ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:     ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVER:     ${{ secrets.EMAIL_RECEIVER }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python monitor.py --reminders
+
+      - name: Save updated reminder state
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deadlines.json 2>/dev/null || true
+          git diff --cached --quiet || \
+            git commit -m "chore: reminder state $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
