@@ -1,0 +1,31 @@
+name: Weekly Digest
+
+on:
+  schedule:
+    - cron: "0 8 * * 0"   # Every Sunday at 8:00 AM UTC (1:30 PM IST)
+  workflow_dispatch:        # manual trigger
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 anthropic
+
+      - name: Send weekly digest
+        env:
+          EMAIL_SENDER:       ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:     ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVER:     ${{ secrets.EMAIL_RECEIVER }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python monitor.py --digest
